@@ -2,22 +2,21 @@ package logging
 
 import (
 	"errors"
-	"fmt"
 	"os"
 
-	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var (
-	flushLogs           func() error
-	defaultLogger       Logger
-	developmentLogger   Logger
-	productionLogger    Logger
-	defaultLoggingLevel Level
-)
+type zapLogger struct {
+	*zap.SugaredLogger
+}
+
+func (l *zapLogger) With(args ...interface{}) Logger {
+	logger := l.SugaredLogger.With(args...)
+	return &zapLogger{SugaredLogger: logger}
+}
 
 type Level = zapcore.Level
 
@@ -31,30 +30,6 @@ const (
 	FatalLevel
 )
 
-type Env string
-
-const (
-	Production  Env = "prod"
-	Development Env = "dev"
-)
-
-func init() {
-	lvl := viper.GetInt("logging-level")
-	defaultLoggingLevel = Level(lvl)
-	env := Env(viper.GetString("env"))
-	switch env {
-	case Production:
-		defaultLogger = GetProductionLogger()
-	case Development:
-		defaultLogger = GetDevelopmentLogger()
-	default:
-		fmt.Printf("unknow env: {%s}, init Development Logger for project.", env)
-		defaultLogger = GetDevelopmentLogger()
-	}
-	sugaredLogger := defaultLogger.(*zap.SugaredLogger)
-	flushLogs = sugaredLogger.Sync
-}
-
 func GetProductionLogger() Logger {
 	if productionLogger != nil {
 		return productionLogger
@@ -65,8 +40,8 @@ func GetProductionLogger() Logger {
 		return level >= defaultLoggingLevel
 	})
 	core := zapcore.NewCore(encoder, writeSyncer, levelEnabler)
-	zapLogger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
-	productionLogger = zapLogger.Sugar()
+	logger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+	productionLogger = &zapLogger{SugaredLogger: logger.Sugar()}
 	return productionLogger
 }
 
@@ -106,18 +81,14 @@ func GetDevelopmentLogger() Logger {
 	cfg.Level = zap.NewAtomicLevelAt(defaultLoggingLevel)
 	cfg.EncoderConfig.EncodeTime = zapcore.RFC3339NanoTimeEncoder
 	cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-	zapLogger, _ := cfg.Build()
-	zapLogger.WithOptions(zap.AddStacktrace(zapcore.ErrorLevel))
-	developmentLogger = zapLogger.Sugar()
+	logger, _ := cfg.Build()
+	logger.WithOptions(zap.AddStacktrace(zapcore.ErrorLevel))
+	developmentLogger = &zapLogger{SugaredLogger: logger.Sugar()}
 	return developmentLogger
 }
 
 func GetDefaultProductionEncoderConfig() zapcore.EncoderConfig {
 	return zapcore.EncoderConfig{}
-}
-
-func GetDefaultLogger() Logger {
-	return defaultLogger
 }
 
 func LogLevel() string {
@@ -142,50 +113,8 @@ func CreateLoggerAsLocalFile(localFilePath string, logLevel Level) (logger Logge
 		return level >= logLevel
 	})
 	core := zapcore.NewCore(encoder, ws, levelEnabler)
-	zapLogger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
-	logger = zapLogger.Sugar()
-	flush = zapLogger.Sync
+	l := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+	logger = &zapLogger{SugaredLogger: l.Sugar()}
+	flush = logger.(*zapLogger).Sync
 	return
-}
-
-func Cleanup() {
-	if flushLogs != nil {
-		_ = flushLogs()
-	}
-}
-
-func Error(err error) {
-	if err != nil {
-		defaultLogger.Errorf("error occurs during runtime, %v", err)
-	}
-}
-
-func Debugf(format string, args ...interface{}) {
-	defaultLogger.Debugf(format, args...)
-}
-
-func Infof(format string, args ...interface{}) {
-	defaultLogger.Infof(format, args...)
-}
-
-func Warnf(format string, args ...interface{}) {
-	defaultLogger.Warnf(format, args...)
-}
-
-func Errorf(format string, args ...interface{}) {
-	defaultLogger.Errorf(format, args...)
-}
-
-func Fatalf(format string, args ...interface{}) {
-	defaultLogger.Fatalf(format, args...)
-}
-
-type Logger interface {
-	Debugf(format string, args ...interface{})
-	Infof(format string, args ...interface{})
-	Warnf(format string, args ...interface{})
-	Errorf(format string, args ...interface{})
-	Fatalf(format string, args ...interface{})
-
-	With(args ...interface{}) *zap.SugaredLogger
 }
