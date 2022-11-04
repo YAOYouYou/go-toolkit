@@ -40,6 +40,7 @@ require (
 )
 
 require (
+	github.com/confluentinc/confluent-kafka-go v1.9.2
 	github.com/gin-gonic/gin v1.8.1
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/jmoiron/sqlx v1.3.5

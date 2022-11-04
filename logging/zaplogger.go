@@ -9,26 +9,31 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+var (
+	atom              zap.AtomicLevel = zap.NewAtomicLevelAt(zapcore.Level(defaultLoggingLevel))
+	productionLogger  Logger
+	developmentLogger Logger
+)
+
 type zapLogger struct {
 	*zap.SugaredLogger
 }
 
+// With implement Logger With method.
+// return a new logger with speiced args.
 func (l *zapLogger) With(args ...interface{}) Logger {
 	logger := l.SugaredLogger.With(args...)
 	return &zapLogger{SugaredLogger: logger}
 }
 
-type Level = zapcore.Level
-
-const (
-	DebugLevel Level = iota - 1
-	InfoLevel
-	WarnLevel
-	ErrorLevel
-	DPanicLevel
-	PanicLevel
-	FatalLevel
-)
+// SetLevel implement Logger SetLevel method
+// set loger log level.
+// productionLoger by levelEnabler
+// developmentLogger by atom(AtomicLevel pass cfg to new self)
+func (l *zapLogger) SetLevel(level Level) {
+	defaultLoggingLevel = level
+	atom.SetLevel(zapcore.Level(level))
+}
 
 func GetProductionLogger() Logger {
 	if productionLogger != nil {
@@ -36,8 +41,8 @@ func GetProductionLogger() Logger {
 	}
 	encoder := getEncoder()
 	writeSyncer := getWriteSyncer()
-	levelEnabler := zap.LevelEnablerFunc(func(level Level) bool {
-		return level >= defaultLoggingLevel
+	levelEnabler := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
+		return level >= zapcore.Level(defaultLoggingLevel)
 	})
 	core := zapcore.NewCore(encoder, writeSyncer, levelEnabler)
 	logger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
@@ -78,21 +83,17 @@ func GetDevelopmentLogger() Logger {
 		return developmentLogger
 	}
 	cfg := zap.NewDevelopmentConfig()
-	cfg.Level = zap.NewAtomicLevelAt(defaultLoggingLevel)
+	cfg.Level = atom
 	cfg.EncoderConfig.EncodeTime = zapcore.RFC3339NanoTimeEncoder
 	cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	logger, _ := cfg.Build()
-	logger.WithOptions(zap.AddStacktrace(zapcore.ErrorLevel))
+	// logger.WithOptions(zap.AddStacktrace(zapcore.ErrorLevel))
 	developmentLogger = &zapLogger{SugaredLogger: logger.Sugar()}
 	return developmentLogger
 }
 
 func GetDefaultProductionEncoderConfig() zapcore.EncoderConfig {
 	return zapcore.EncoderConfig{}
-}
-
-func LogLevel() string {
-	return defaultLoggingLevel.String()
 }
 
 func CreateLoggerAsLocalFile(localFilePath string, logLevel Level) (logger Logger, flush func() error, err error) {
@@ -109,8 +110,8 @@ func CreateLoggerAsLocalFile(localFilePath string, logLevel Level) (logger Logge
 	encoder := getEncoder()
 	ws := zapcore.AddSync(lumberJackLogger)
 	zapcore.Lock(ws)
-	levelEnabler := zap.LevelEnablerFunc(func(level Level) bool {
-		return level >= logLevel
+	levelEnabler := zap.LevelEnablerFunc(func(level zapcore.Level) bool {
+		return level >= zapcore.Level(level)
 	})
 	core := zapcore.NewCore(encoder, ws, levelEnabler)
 	l := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))

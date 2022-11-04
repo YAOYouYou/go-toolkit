@@ -1,11 +1,5 @@
 package logging
 
-import (
-	"fmt"
-
-	"github.com/spf13/viper"
-)
-
 type Env string
 
 const (
@@ -14,25 +8,12 @@ const (
 )
 
 var (
-	defaultLogger       Logger
-	developmentLogger   Logger
-	productionLogger    Logger
 	defaultLoggingLevel Level
+	defaultLogger       Logger
 )
 
 func init() {
-	lvl := viper.GetInt("logging-level")
-	defaultLoggingLevel = Level(lvl)
-	env := Env(viper.GetString("env"))
-	switch env {
-	case Production:
-		defaultLogger = GetProductionLogger()
-	case Development:
-		defaultLogger = GetDevelopmentLogger()
-	default:
-		fmt.Printf("unknow env: {%s}, init Development Logger for project.", env)
-		defaultLogger = GetDevelopmentLogger()
-	}
+	defaultLogger = GetDevelopmentLogger()
 }
 
 func SetLogger(l Logger) {
@@ -67,6 +48,18 @@ func Sync() error {
 	return defaultLogger.Sync()
 }
 
+type Level int8
+
+const (
+	DebugLevel Level = iota - 1
+	InfoLevel
+	WarnLevel
+	ErrorLevel
+	DPanicLevel
+	PanicLevel
+	FatalLevel
+)
+
 type Logger interface {
 	Debugf(format string, args ...interface{})
 	Infof(format string, args ...interface{})
@@ -78,4 +71,7 @@ type Logger interface {
 
 	// Sync flushes any buffered log entries.
 	Sync() error
+
+	// SetLevel mean set default logger Level
+	SetLevel(level Level)
 }
