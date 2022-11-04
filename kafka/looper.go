@@ -29,26 +29,10 @@ type Looper struct {
 	closeCb func()
 }
 
+
+
 func (l *Looper) Run() {
-	rebalanceCb := func(consumer *kafka.Consumer, ev kafka.Event) error {
-		switch e := ev.(type) {
-		case kafka.AssignedPartitions:
-			logging.Infof("Rebalance - Assigned:", e.Partitions)
-
-			// reset
-			atomic.AddInt32(&l.gen, 1)
-			l.offsetsMap = make(map[string]kafka.TopicPartition)
-
-			consumer.Assign(e.Partitions)
-
-		case kafka.RevokedPartitions:
-			logging.Infof("Rebalance - Revoked:", e.Partitions)
-			consumer.Unassign()
-		}
-		return nil
-	}
-	l.consumer.Subscribe(l.topic, rebalanceCb)
-
+	l.consumer.Subscribe(l.topic, nil)
 	signal.Notify(l.sigC, syscall.SIGINT, syscall.SIGTERM)
 
 Loop:
@@ -66,6 +50,19 @@ Loop:
 				continue
 			}
 			switch e := ev.(type) {
+			case kafka.AssignedPartitions:
+				logging.Infof("Rebalance - Assigned:", e.Partitions)
+
+				// reset
+				atomic.AddInt32(&l.gen, 1)
+				l.offsetsMap = make(map[string]kafka.TopicPartition)
+
+				l.consumer.Assign(e.Partitions)
+			case kafka.RevokedPartitions:
+				logging.Infof("Rebalance - Revoked:", e.Partitions)
+				l.consumer.Commit()
+				l.consumer.Unassign()
+
 			case *kafka.Message:
 				logging.Debugf("receive messages@", e.TopicPartition)
 				l.wg.Add(1)
