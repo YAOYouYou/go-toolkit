@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	atom              zap.AtomicLevel = zap.NewAtomicLevelAt(zapcore.Level(defaultLoggingLevel))
+	atomLevel         zap.AtomicLevel = zap.NewAtomicLevelAt(zapcore.Level(defaultLoggingLevel))
 	productionLogger  Logger
 	developmentLogger Logger
 )
@@ -32,7 +32,7 @@ func (l *zapLogger) With(args ...interface{}) Logger {
 // developmentLogger by atom(AtomicLevel pass cfg to new self)
 func (l *zapLogger) SetLevel(level Level) {
 	defaultLoggingLevel = level
-	atom.SetLevel(zapcore.Level(level))
+	atomLevel.SetLevel(zapcore.Level(level))
 }
 
 func GetProductionLogger() Logger {
@@ -83,7 +83,7 @@ func GetDevelopmentLogger() Logger {
 		return developmentLogger
 	}
 	cfg := zap.NewDevelopmentConfig()
-	cfg.Level = atom
+	cfg.Level = atomLevel
 	cfg.EncoderConfig.EncodeTime = zapcore.RFC3339NanoTimeEncoder
 	cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	logger, _ := cfg.Build()
