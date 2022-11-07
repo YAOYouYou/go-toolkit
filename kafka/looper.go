@@ -1,4 +1,4 @@
-package kafka
+package kafkautil
 
 import (
 	"fmt"
@@ -16,34 +16,53 @@ import (
 type Option func(l *Looper)
 
 type Looper struct {
-	consumer *kafka.Consumer
-	topic    string
+	consumer    *kafka.Consumer
+	topic       string
+	consumerCfg ConsumerConfig
 
 	numPerCommit int
 	workers      int
 
+	filter  func(m *kafka.Message) bool
+	eventCb func(e *kafka.Message) error
+	onError func(m *kafka.Message, err error) error
+	onClose func()
+
 	sigC       chan os.Signal
-	eventCb    func(e *kafka.Message) error
 	count      int
 	gen        int32
 	offsetsMap map[string]kafka.TopicPartition
 	wg         sync.WaitGroup
-
-	filter  func(m *kafka.Message) bool
-	errorCb func(m *kafka.Message, err error) error
-	closeCb func()
-}
-
-func WithConsumer(consumer *kafka.Consumer) Option {
-	return func(l *Looper) {
-		l.consumer = consumer
-	}
 }
 
 // WithTopic set consumer consume topic
 func WithTopic(topic string) Option {
 	return func(l *Looper) {
 		l.topic = topic
+	}
+}
+
+func WithEventCb(f func(m *kafka.Message) error) Option {
+	return func(l *Looper) {
+		l.eventCb = f
+	}
+}
+
+func WithOnError(f func(m *kafka.Message, err error) error) Option {
+	return func(l *Looper) {
+		l.onError = f
+	}
+}
+
+func WithOnClose(f func()) Option {
+	return func(l *Looper) {
+		l.onClose = f
+	}
+}
+
+func WithFilter(f func(m *kafka.Message) bool) Option {
+	return func(l *Looper) {
+		l.filter = f
 	}
 }
 
@@ -63,20 +82,25 @@ func WithWorkers(num int) Option {
 	}
 }
 
-func New(options ...Option) *Looper {
+func New(addr, topic, groupId string, options ...Option) *Looper {
 	l := &Looper{}
+	l.consumerCfg.BootstrapServers = addr
+	l.consumerCfg.Topic = topic
+	l.consumerCfg.GroupId = groupId
+
+	l.numPerCommit = 1
+	l.workers = 1
+
 	for _, f := range options {
 		f(l)
 	}
 
-	if l.numPerCommit == 0 {
-		l.numPerCommit = 1
-	}
-	if l.workers == 0 {
-		l.workers = 1
-	}
 	if l.numPerCommit%l.workers != 0 {
 		panic("numPerCommit must be s multiple of workers")
+	}
+
+	if l.consumer == nil {
+		l.consumer = NewConsumer(&l.consumerCfg)
 	}
 	return l
 }
@@ -99,6 +123,7 @@ func (l *Looper) Run() {
 		}
 		return nil
 	}
+
 	l.consumer.Subscribe(l.topic, rebalanceCb)
 
 	signal.Notify(l.sigC, syscall.SIGINT, syscall.SIGTERM)
@@ -108,7 +133,8 @@ Loop:
 		select {
 		case sig := <-l.sigC:
 			logging.Infof("System interupt dected:", sig)
-			l.closeCb()
+			l.onClose()
+			l.consumer.Close()
 			break Loop
 		default:
 			ev := l.consumer.Poll(100)
@@ -117,17 +143,16 @@ Loop:
 				logging.Debugf("Heartbeat")
 				continue
 			}
-			switch e := ev.(type) {
+			switch event := ev.(type) {
 			case *kafka.Message:
+				e := event
 				logging.Debugf("receive messages@", e.TopicPartition)
 				l.wg.Add(1)
 				go func(e *kafka.Message, g int32) {
 					defer func() {
 						l.wg.Done()
 
-						// check rebalance
-						if g == atomic.LoadInt32(&l.gen) {
-							// Store current offset based on current message topic partition
+						if !l.checkReBlance(gen) {
 							key := fmt.Sprintf("%s[%d]", *e.TopicPartition.Topic, e.TopicPartition.Partition)
 							l.offsetsMap[key] = e.TopicPartition
 						}
@@ -141,8 +166,8 @@ Loop:
 					// call eventCb process message
 					// eventCb err are not handled by default
 					err := l.eventCb(e)
-					if l.errorCb != nil {
-						l.errorCb(e, err)
+					if l.onError != nil {
+						l.onError(e, err)
 					}
 				}(e, gen)
 
@@ -152,19 +177,23 @@ Loop:
 					l.commit(gen)
 				}
 			default:
-				logging.Infof("other events:", e)
+				logging.Infof("other events:", event)
 			}
 		}
 	}
 
 }
 
+func (l *Looper) checkReBlance(gen int32) bool {
+	return gen != atomic.LoadInt32(&l.gen)
+}
+
 func (l *Looper) commit(gen int32) {
 	if len(l.offsetsMap) == 0 {
 		return
 	}
-	// check rebalanced
-	if gen != atomic.LoadInt32(&l.gen) {
+
+	if l.checkReBlance(gen) {
 		return
 	}
 	tps := make([]kafka.TopicPartition, len(l.offsetsMap))
@@ -182,8 +211,8 @@ func (l *Looper) commit(gen int32) {
 }
 
 func (l *Looper) Close() {
-	l.consumer.Close()
-	if l.closeCb != nil {
-		l.closeCb()
+	if l.onClose != nil {
+		l.onClose()
 	}
+	l.consumer.Close()
 }
